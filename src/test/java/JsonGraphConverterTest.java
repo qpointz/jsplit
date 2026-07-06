@@ -1,6 +1,5 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -84,13 +83,13 @@ class JsonGraphConverterTest {
         Graph graph = converter.split(parse(SAMPLE_JSON));
 
         assertEquals(5, graph.getEntities().size());
-        assertEquals(4, graph.getRelations().size());
+        assertEquals(12, graph.getRelations().size());
         assertTrue(graph.getEntities().containsKey(graph.getRootId()));
 
-        UUID customerId = findChildId(graph, graph.getRootId(), "property", "customer");
-        UUID addressId = findChildId(graph, customerId, "property", "address");
-        UUID bookId = findChildId(graph, graph.getRootId(), "array", "items", 0);
-        UUID penId = findChildId(graph, graph.getRootId(), "array", "items", 1);
+        UUID customerId = findChildId(graph, graph.getRootId(), MetadataType.PROPERTY, "customer");
+        UUID addressId = findChildId(graph, customerId, MetadataType.PROPERTY, "address");
+        UUID bookId = findChildId(graph, graph.getRootId(), MetadataType.ARRAY, "items", 0);
+        UUID penId = findChildId(graph, graph.getRootId(), MetadataType.ARRAY, "items", 1);
 
         assertRelation(graph, graph.getRootId(), customerId);
         assertRelation(graph, customerId, addressId);
@@ -118,7 +117,7 @@ class JsonGraphConverterTest {
         Graph graph = converter.split(original);
 
         assertEquals(1, graph.getEntities().size());
-        assertEquals(0, graph.getRelations().size());
+        assertEquals(2, graph.getRelations().size());
         assertEquals(original, graph.getEntities().get(graph.getRootId()).getPayload());
     }
 
@@ -138,14 +137,19 @@ class JsonGraphConverterTest {
         Graph graph = converter.split(original);
 
         assertEquals(2, graph.getEntities().size());
-        assertEquals(1, graph.getRelations().size());
+        assertEquals(2, graph.getRelations().size());
         assertEquals(0, graph.getEntities().get(graph.getRootId()).getPayload().size());
 
-        UUID childId = findChildId(graph, graph.getRootId(), "property", "child");
+        UUID childId = findChildId(graph, graph.getRootId(), MetadataType.PROPERTY, "child");
         assertRelation(graph, graph.getRootId(), childId);
         assertEquals(1, graph.getEntities().get(childId).getPayload().get("value").asInt());
-        assertEquals("property", graph.getRelations().get(0).getMetadata().get("kind").asText());
-        assertEquals("child", graph.getRelations().get(0).getMetadata().get("key").asText());
+
+        RelationMetadata property = graph.getRelations().stream()
+                .map(Relation::getMetadata)
+                .filter(m -> m.getType() == MetadataType.PROPERTY)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("child", property.getKey());
     }
 
     @Test
@@ -154,20 +158,20 @@ class JsonGraphConverterTest {
         Graph graph = converter.split(original);
 
         assertEquals(2, graph.getEntities().size());
-        assertEquals(3, graph.getRelations().size());
+        assertEquals(4, graph.getRelations().size());
         assertFalse(graph.getEntities().get(graph.getRootId()).getPayload().has("items"));
 
         assertTrue(graph.getRelations().stream().anyMatch(r ->
-                "array".equals(r.getMetadata().get("kind").asText())
-                        && r.getMetadata().get("path").get(0).asInt() == 0));
+                r.getMetadata().getType() == MetadataType.ARRAY
+                        && r.getMetadata().getPath().get(0) == 0));
         assertTrue(graph.getRelations().stream().anyMatch(r ->
-                "arrayValue".equals(r.getMetadata().get("kind").asText())
-                        && r.getMetadata().get("path").get(0).asInt() == 1
-                        && "plain".equals(r.getMetadata().get("value").asText())));
+                r.getMetadata().getType() == MetadataType.ARRAY_VALUE
+                        && r.getMetadata().getPath().get(0) == 1
+                        && "plain".equals(r.getMetadata().getValue().asText())));
         assertTrue(graph.getRelations().stream().anyMatch(r ->
-                "arrayValue".equals(r.getMetadata().get("kind").asText())
-                        && r.getMetadata().get("path").get(0).asInt() == 2
-                        && r.getMetadata().get("value").asInt() == 42));
+                r.getMetadata().getType() == MetadataType.ARRAY_VALUE
+                        && r.getMetadata().getPath().get(0) == 2
+                        && r.getMetadata().getValue().asInt() == 42));
     }
 
     @Test
@@ -225,9 +229,11 @@ class JsonGraphConverterTest {
         Graph graph = new Graph(
                 rootId,
                 Map.of(
-                        rootId, new Entity(rootId, "object", rootPayload, Map.of()),
-                        childId, new Entity(childId, "object", childPayload, Map.of("city", 0))),
-                List.of(new Relation(rootId, childId, propertyMetadata("address", 0))));
+                        rootId, new Entity(rootId, "object", rootPayload),
+                        childId, new Entity(childId, "object", childPayload)),
+                List.of(
+                        new Relation(rootId, childId, RelationMetadata.property("address", 0)),
+                        new Relation(childId, null, RelationMetadata.field("city", 0))));
 
         JsonNode result = converter.assemble(graph);
         assertEquals("Bern", result.get("address").get("city").asText());
@@ -246,9 +252,12 @@ class JsonGraphConverterTest {
         Graph graph = new Graph(
                 rootId,
                 Map.of(
-                        rootId, new Entity(rootId, "object", rootPayload, Map.of()),
-                        itemId, new Entity(itemId, "object", itemPayload, Map.of("name", 0, "price", 1))),
-                List.of(new Relation(rootId, itemId, arrayMetadata("items", 0, List.of(0)))));
+                        rootId, new Entity(rootId, "object", rootPayload),
+                        itemId, new Entity(itemId, "object", itemPayload)),
+                List.of(
+                        new Relation(rootId, itemId, RelationMetadata.array("items", 0, List.of(0))),
+                        new Relation(itemId, null, RelationMetadata.field("name", 0)),
+                        new Relation(itemId, null, RelationMetadata.field("price", 1))));
 
         JsonNode result = converter.assemble(graph);
         assertEquals("Book", result.get("items").get(0).get("name").asText());
@@ -292,8 +301,8 @@ class JsonGraphConverterTest {
 
         Graph graph = new Graph(
                 rootId,
-                Map.of(rootId, new Entity(rootId, "object", rootPayload, Map.of())),
-                List.of(new Relation(rootId, missingId, propertyMetadata("child", 0))));
+                Map.of(rootId, new Entity(rootId, "object", rootPayload)),
+                List.of(new Relation(rootId, missingId, RelationMetadata.property("child", 0))));
 
         assertThrows(IllegalArgumentException.class, () -> converter.assemble(graph));
     }
@@ -307,6 +316,19 @@ class JsonGraphConverterTest {
 
         assertEquals(graph, restored);
         assertEquals(parse(SAMPLE_JSON), converter.assemble(restored));
+    }
+
+    @Test
+    void relationMetadata_jsonRoundTrip() throws Exception {
+        RelationMetadata metadata = mapper.readValue(
+                "{\"kind\":\"arrayValue\",\"key\":\"items\",\"order\":2,\"path\":[1],\"value\":\"plain\"}",
+                RelationMetadata.class);
+
+        assertEquals(MetadataType.ARRAY_VALUE, metadata.getType());
+        assertEquals("items", metadata.getKey());
+        assertEquals(2, metadata.getOrder());
+        assertEquals(List.of(1), metadata.getPath());
+        assertEquals("plain", metadata.getValue().asText());
     }
 
     // --- round-trip integration ---
@@ -342,41 +364,23 @@ class JsonGraphConverterTest {
                 """));
     }
 
-    private static ObjectNode propertyMetadata(String key, int order) {
-        ObjectNode metadata = JsonNodeFactory.instance.objectNode();
-        metadata.put("kind", "property");
-        metadata.put("key", key);
-        metadata.put("order", order);
-        return metadata;
-    }
-
-    private static ObjectNode arrayMetadata(String key, int order, List<Integer> path) {
-        ObjectNode metadata = JsonNodeFactory.instance.objectNode();
-        metadata.put("kind", "array");
-        metadata.put("key", key);
-        metadata.put("order", order);
-        var pathNode = metadata.putArray("path");
-        path.forEach(pathNode::add);
-        return metadata;
-    }
-
-    private static UUID findChildId(Graph graph, UUID parentId, String kind, String key) {
+    private static UUID findChildId(Graph graph, UUID parentId, MetadataType type, String key) {
         return graph.getRelations().stream()
                 .filter(r -> r.getParentId().equals(parentId))
-                .filter(r -> kind.equals(r.getMetadata().get("kind").asText()))
-                .filter(r -> key.equals(r.getMetadata().get("key").asText()))
-                .map(r -> r.getChildId())
+                .filter(r -> r.getMetadata().getType() == type)
+                .filter(r -> key.equals(r.getMetadata().getKey()))
+                .map(Relation::getChildId)
                 .findFirst()
                 .orElseThrow();
     }
 
-    private static UUID findChildId(Graph graph, UUID parentId, String kind, String key, int index) {
+    private static UUID findChildId(Graph graph, UUID parentId, MetadataType type, String key, int index) {
         return graph.getRelations().stream()
                 .filter(r -> r.getParentId().equals(parentId))
-                .filter(r -> kind.equals(r.getMetadata().get("kind").asText()))
-                .filter(r -> key.equals(r.getMetadata().get("key").asText()))
-                .filter(r -> r.getMetadata().get("path").get(0).asInt() == index)
-                .map(r -> r.getChildId())
+                .filter(r -> r.getMetadata().getType() == type)
+                .filter(r -> key.equals(r.getMetadata().getKey()))
+                .filter(r -> r.getMetadata().getPath().get(0) == index)
+                .map(Relation::getChildId)
                 .findFirst()
                 .orElseThrow();
     }

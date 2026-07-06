@@ -54,17 +54,24 @@ Graph
 Entity
 ├── id: UUID
 ├── type: String                    // always "object"
-├── payload: ObjectNode             // scalars + primitive-only arrays only
-└── payloadFieldOrder: Map<String, Integer>  // original field index per payload key
+└── payload: ObjectNode             // scalars + primitive-only arrays only
 
 Relation
 ├── parentId: UUID
-├── childId: UUID | null            // null for inline array primitives
-└── metadata: ObjectNode            // placement and optional inline value
+├── childId: UUID | null
+└── metadata: RelationMetadata
+
+RelationMetadata
+├── type: MetadataType     // serialized as JSON "kind"
+├── key: String
+├── order: int
+├── path: List<Integer>    // ARRAY, ARRAY_VALUE
+└── value: JsonNode        // ARRAY_VALUE only
 ```
 
-`Graph`, `Entity`, and `Relation` are Lombok `@Data` classes with Jackson-compatible
-constructors (`@NoArgsConstructor`, `@AllArgsConstructor`) for JSON serialization.
+`MetadataType`: `FIELD`, `PROPERTY`, `ARRAY`, `ARRAY_VALUE` (JSON: `field`, `property`, `array`, `arrayValue`).
+
+`Graph`, `Entity`, `Relation`, and `RelationMetadata` are Lombok `@Data` classes with Jackson-compatible constructors for JSON serialization.
 
 ## Entity payload rules
 
@@ -86,38 +93,26 @@ Nested objects and arrays containing objects are **removed** from the payload. T
 
 ## Relation metadata
 
-Relations carry arbitrary placement information in `metadata` (`ObjectNode`). Conventional `kind` values:
+`Relation.metadata` is a single `RelationMetadata` type with a `MetadataType` discriminator (JSON field `kind`):
 
-| kind | When | metadata fields |
-|------|------|-----------------|
-| `property` | nested object field | `key`, `order` |
-| `array` | object element in array | `key`, `order`, `path` |
-| `arrayValue` | primitive in mixed array | `key`, `order`, `path`, `value` |
+| MetadataType | JSON kind | meaningful fields |
+|--------------|-----------|-------------------|
+| `FIELD` | `field` | `key`, `order` |
+| `PROPERTY` | `property` | `key`, `order` |
+| `ARRAY` | `array` | `key`, `order`, `path` |
+| `ARRAY_VALUE` | `arrayValue` | `key`, `order`, `path`, `value` |
 
-- `key` — property name on the parent object
-- `order` — original field index on the parent (preserves property order)
-- `path` — array indices from the property's array root (e.g. `[0,0]` for `groups[0][0]`)
-- `value` — inline primitive for `arrayValue` relations (`childId` is null)
-
-### Example relations for the sample document
-
-```
-root -> customer   { "kind": "property", "key": "customer", "order": 1 }
-root -> book       { "kind": "array", "key": "items", "order": 2, "path": [0] }
-root -> pen        { "kind": "array", "key": "items", "order": 2, "path": [1] }
-customer -> address { "kind": "property", "key": "address", "order": 1 }
-```
+Unused properties are omitted from JSON (`null`).
 
 ## Split algorithm
 
 Depth-first traversal:
 
 1. Each JSON **object** becomes one `Entity`.
-2. **Scalar** fields are copied into the entity payload with their original field index.
+2. **Scalar** fields and **primitive-only arrays** are stored in the entity payload; a `field` relation records `key` and `order`.
 3. **Nested object** fields are removed from the payload; a `property` relation records `key`, `order`, and `childId`.
-4. **Primitive-only arrays** stay in the payload.
-5. **Arrays containing objects or nested arrays** are removed from the payload; each element becomes an `array` or `arrayValue` relation with `path` indices.
-6. The root entity's UUID becomes `graph.rootId`.
+4. **Arrays containing objects or nested arrays** are removed from the payload; each element becomes an `array` or `arrayValue` relation with `path` indices.
+5. The root entity's UUID becomes `graph.rootId`.
 
 **Input is never modified.**
 
@@ -140,12 +135,14 @@ jsplit/
 ├── src/main/java/Graph.java
 ├── src/main/java/Entity.java
 ├── src/main/java/Relation.java
+├── src/main/java/RelationMetadata.java
+├── src/main/java/MetadataType.java
 ├── src/test/java/JsonGraphConverterTest.java
 ├── build.gradle.kts
 └── settings.gradle.kts
 ```
 
-Production code is split across the converter and three Lombok-annotated model classes.
+Production code is split across the converter and Lombok-annotated model classes.
 
 ## Tests
 

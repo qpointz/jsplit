@@ -3,15 +3,13 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.Map;
 import java.util.UUID;
 
 /**
  * A single node in the graph, corresponding to one JSON object from the original document.
  *
- * <p>The payload contains only scalar fields and arrays whose elements are all primitives.
- * {@link #payloadFieldOrder} records the original property index for each payload key so
- * property order can be restored during {@link JsonGraphConverter#assemble(Graph)}.
+ * <p>The payload holds scalar fields and primitive-only arrays. Field order and all
+ * nested structure are encoded in {@link Relation} metadata on the parent entity.
  */
 @Data
 @NoArgsConstructor
@@ -20,5 +18,4 @@ public class Entity {
     private UUID id;
     private String type;
     private ObjectNode payload;
-    private Map<String, Integer> payloadFieldOrder;
 }
