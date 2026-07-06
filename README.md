@@ -2,10 +2,13 @@
 
 A standalone Java utility that converts hierarchical JSON documents into a flat graph representation and back again, with lossless round-trip equality.
 
+Structure is encoded in **entities** (scalar data) and **relations** (placement metadata), not in nested payload shape.
+
 ## Requirements
 
 - Java 21
 - [Jackson Databind](https://github.com/FasterXML/jackson-databind) (only runtime dependency)
+- [Lombok](https://projectlombok.org/) (compile-time only, for model boilerplate)
 - No Spring, no persistence layer
 
 ## Build and run
@@ -50,84 +53,104 @@ Graph
 
 Entity
 ├── id: UUID
-├── type: String          // always "object"
-└── payload: ObjectNode   // flattened copy with $node placeholders
+├── type: String                    // always "object"
+├── payload: ObjectNode             // scalars + primitive-only arrays only
+└── payloadFieldOrder: Map<String, Integer>  // original field index per payload key
 
 Relation
 ├── parentId: UUID
-└── childId: UUID
+├── childId: UUID | null            // null for inline array primitives
+└── metadata: ObjectNode            // placement and optional inline value
 ```
 
-## Split algorithm
+`Graph`, `Entity`, and `Relation` are Lombok `@Data` classes with Jackson-compatible
+constructors (`@NoArgsConstructor`, `@AllArgsConstructor`) for JSON serialization.
 
-Depth-first traversal of the input JSON tree:
+## Entity payload rules
 
-1. Each JSON **object** becomes one `Entity` with a generated UUID.
-2. The entity **payload** is a deep copy of that object.
-3. When a property value is a nested **object**, the child is split recursively, the payload entry is replaced with `{"$node":"<child-uuid>"}`, and a `Relation(parent, child)` is recorded.
-4. When an **array** contains object elements, each object element is replaced with `{"$node":"<uuid>"}`; primitive elements are left unchanged.
-5. Primitive properties and arrays of primitives are copied as-is.
-6. The root entity's UUID becomes `graph.rootId`.
+An entity `payload` contains **only**:
 
-**Input is never modified** — all changes happen on `deepCopy()` payloads.
+- scalar properties (string, number, boolean, null)
+- arrays whose elements are **all primitives** (e.g. `"tags": ["a","b","c"]`)
 
-### Example
+Nested objects and arrays containing objects are **removed** from the payload. Their placement is recorded in relations.
 
-Input:
+### Example root payload after split
 
 ```json
 {
   "number": "123",
-  "customer": {
-    "name": "John",
-    "address": { "city": "Bern" }
-  },
-  "items": [
-    { "name": "Book", "price": 10 },
-    { "name": "Pen", "price": 2 }
-  ],
   "tags": ["a", "b", "c"]
 }
 ```
 
-After `split()`:
+## Relation metadata
 
-- **5 entities** — root, customer, address, and two items
-- **4 relations** — root→customer, customer→address, root→book, root→pen
-- Root payload keeps `"number"` and `"tags"` intact; nested objects become `$node` references
+Relations carry arbitrary placement information in `metadata` (`ObjectNode`). Conventional `kind` values:
+
+| kind | When | metadata fields |
+|------|------|-----------------|
+| `property` | nested object field | `key`, `order` |
+| `array` | object element in array | `key`, `order`, `path` |
+| `arrayValue` | primitive in mixed array | `key`, `order`, `path`, `value` |
+
+- `key` — property name on the parent object
+- `order` — original field index on the parent (preserves property order)
+- `path` — array indices from the property's array root (e.g. `[0,0]` for `groups[0][0]`)
+- `value` — inline primitive for `arrayValue` relations (`childId` is null)
+
+### Example relations for the sample document
+
+```
+root -> customer   { "kind": "property", "key": "customer", "order": 1 }
+root -> book       { "kind": "array", "key": "items", "order": 2, "path": [0] }
+root -> pen        { "kind": "array", "key": "items", "order": 2, "path": [1] }
+customer -> address { "kind": "property", "key": "address", "order": 1 }
+```
+
+## Split algorithm
+
+Depth-first traversal:
+
+1. Each JSON **object** becomes one `Entity`.
+2. **Scalar** fields are copied into the entity payload with their original field index.
+3. **Nested object** fields are removed from the payload; a `property` relation records `key`, `order`, and `childId`.
+4. **Primitive-only arrays** stay in the payload.
+5. **Arrays containing objects or nested arrays** are removed from the payload; each element becomes an `array` or `arrayValue` relation with `path` indices.
+6. The root entity's UUID becomes `graph.rootId`.
+
+**Input is never modified.**
 
 ## Assemble algorithm
 
-Starting from `graph.rootId`, depth-first reconstruction:
+Starting from `graph.rootId`:
 
-1. Load the entity payload (deep copy).
-2. Wherever a value matches `{"$node":"<uuid>"}`, replace it with the recursively assembled child entity.
-3. Return the rebuilt `ObjectNode`.
+1. Load the entity's scalar payload and all relations where `parentId` matches.
+2. Merge payload fields and relation-derived fields by `order`.
+3. For each array property, rebuild the array from `array` and `arrayValue` relations grouped by `key` and `path`.
+4. Recursively rebuild child entities referenced by relations.
 
 Property order and array order from the original document are preserved.
-
-## Reserved key: `$node`
-
-`"$node"` is a reserved placeholder name used inside entity payloads to reference child entities by UUID. UUIDs exist only inside the `Graph`; they do not appear in assembled output.
-
-**Limitation:** input JSON that already contains a lone `{"$node":"<uuid>"}` object cannot be distinguished from graph output.
 
 ## Project layout
 
 ```
 jsplit/
-├── src/main/java/JsonGraphConverter.java   # converter, models, demo main()
+├── src/main/java/JsonGraphConverter.java
+├── src/main/java/Graph.java
+├── src/main/java/Entity.java
+├── src/main/java/Relation.java
 ├── src/test/java/JsonGraphConverterTest.java
 ├── build.gradle.kts
 └── settings.gradle.kts
 ```
 
-All production code lives in a single source file. Model classes (`Graph`, `Entity`, `Relation`) are package-private top-level classes in the same file.
+Production code is split across the converter and three Lombok-annotated model classes.
 
 ## Tests
 
 `JsonGraphConverterTest` covers:
 
-- **split()** — entity/relation counts, payload placeholders, input immutability, error on non-object root
+- **split()** — flat payloads, relation metadata, input immutability, no nested objects in payloads
 - **assemble()** — reconstruction from split graphs and hand-built graphs, order preservation, missing-entity errors
 - **round-trip** — nested arrays, mixed primitive/object arrays, full sample document
