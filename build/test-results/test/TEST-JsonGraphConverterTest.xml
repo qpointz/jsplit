@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="JsonGraphConverterTest" tests="19" skipped="0" failures="0" errors="0" timestamp="2026-07-06T13:20:14.911Z" hostname="DESKTOP-QTGTBJ9" time="0.345">
+  <properties/>
+  <testcase name="roundTrip_mixedArray()" classname="JsonGraphConverterTest" time="0.255"/>
+  <testcase name="roundTrip_nestedArrays()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_emptyObject()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_rejectsNonObjectRoot()" classname="JsonGraphConverterTest" time="0.005"/>
+  <testcase name="split_sampleDocument_payloadPlaceholders()" classname="JsonGraphConverterTest" time="0.004"/>
+  <testcase name="split_arrayOfObjects_replacesOnlyObjects()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_nestedObject_createsRelation()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="roundTrip_sampleDocument()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="assemble_noNodeRefsInOutput()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="assemble_nestedObjects()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="assemble_arrayOfObjects()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="assemble_preservesArrayOrder()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_setsRootId()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="assemble_preservesPropertyOrder()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="split_flatObject()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="assemble_sampleDocument_fromSplitGraph()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_sampleDocument_entitiesAndRelations()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_doesNotMutateInput()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="assemble_throwsOnMissingEntity()" classname="JsonGraphConverterTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
