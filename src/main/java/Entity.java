@@ -1,15 +1,17 @@
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
  * A single node in the graph, corresponding to one JSON object from the original document.
  *
- * <p>The payload holds scalar fields and primitive-only arrays. Field order and all
- * nested structure are encoded in {@link Relation} metadata on the parent entity.
+ * <p>The payload holds scalar fields and primitive-only arrays as plain Java values
+ * ({@link Map}, {@link String}, {@link Number}, {@link Boolean}, lists, etc.).
+ * Use {@link #payloadAsObjectNode()} when Jackson tree access is needed.
  */
 @Data
 @NoArgsConstructor
@@ -17,5 +19,13 @@ import java.util.UUID;
 public class Entity {
     private UUID id;
     private String type;
-    private ObjectNode payload;
+    private Map<String, Object> payload = new LinkedHashMap<>();
+
+    public com.fasterxml.jackson.databind.node.ObjectNode payloadAsObjectNode() {
+        return JsonTrees.objectNodeFromMap(payload);
+    }
+
+    public void setPayloadFromObjectNode(com.fasterxml.jackson.databind.node.ObjectNode node) {
+        this.payload = JsonTrees.mapFromObjectNode(node);
+    }
 }

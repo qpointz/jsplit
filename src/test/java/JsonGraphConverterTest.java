@@ -1,6 +1,5 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -57,19 +56,16 @@ class JsonGraphConverterTest {
         assertEquals(original, converter.assemble(graph));
     }
 
-    private static boolean containsNestedStructure(JsonNode node) {
-        if (node.isObject()) {
-            Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
-            while (fields.hasNext()) {
-                JsonNode value = fields.next().getValue();
-                if (value.isObject() || containsNestedStructure(value)) {
-                    return true;
-                }
+    private static boolean containsNestedStructure(Map<String, Object> payload) {
+        for (Object value : payload.values()) {
+            if (value instanceof Map<?, ?>) {
+                return true;
             }
-        } else if (node.isArray()) {
-            for (JsonNode element : node) {
-                if (element.isObject() || element.isArray()) {
-                    return true;
+            if (value instanceof List<?> list) {
+                for (Object element : list) {
+                    if (element instanceof Map<?, ?> || element instanceof List<?>) {
+                        return true;
+                    }
                 }
             }
         }
@@ -100,7 +96,7 @@ class JsonGraphConverterTest {
     @Test
     void split_sampleDocument_flatPayload() throws Exception {
         Graph graph = converter.split(parse(SAMPLE_JSON));
-        ObjectNode rootPayload = graph.getEntities().get(graph.getRootId()).getPayload();
+        JsonNode rootPayload = graph.getEntities().get(graph.getRootId()).payloadAsObjectNode();
 
         assertEquals("123", rootPayload.get("number").asText());
         assertFalse(rootPayload.has("customer"));
@@ -118,7 +114,7 @@ class JsonGraphConverterTest {
 
         assertEquals(1, graph.getEntities().size());
         assertEquals(2, graph.getRelations().size());
-        assertEquals(original, graph.getEntities().get(graph.getRootId()).getPayload());
+        assertEquals(original, graph.getEntities().get(graph.getRootId()).payloadAsObjectNode());
     }
 
     @Test
@@ -128,7 +124,7 @@ class JsonGraphConverterTest {
 
         assertEquals(1, graph.getEntities().size());
         assertEquals(0, graph.getRelations().size());
-        assertEquals(0, graph.getEntities().get(graph.getRootId()).getPayload().size());
+        assertTrue(graph.getEntities().get(graph.getRootId()).getPayload().isEmpty());
     }
 
     @Test
@@ -138,11 +134,11 @@ class JsonGraphConverterTest {
 
         assertEquals(2, graph.getEntities().size());
         assertEquals(2, graph.getRelations().size());
-        assertEquals(0, graph.getEntities().get(graph.getRootId()).getPayload().size());
+        assertTrue(graph.getEntities().get(graph.getRootId()).getPayload().isEmpty());
 
         UUID childId = findChildId(graph, graph.getRootId(), MetadataType.PROPERTY, "child");
         assertRelation(graph, graph.getRootId(), childId);
-        assertEquals(1, graph.getEntities().get(childId).getPayload().get("value").asInt());
+        assertEquals(1, graph.getEntities().get(childId).getPayload().get("value"));
 
         RelationMetadata property = graph.getRelations().stream()
                 .map(Relation::getMetadata)
@@ -159,7 +155,7 @@ class JsonGraphConverterTest {
 
         assertEquals(2, graph.getEntities().size());
         assertEquals(4, graph.getRelations().size());
-        assertFalse(graph.getEntities().get(graph.getRootId()).getPayload().has("items"));
+        assertFalse(graph.getEntities().get(graph.getRootId()).getPayload().containsKey("items"));
 
         assertTrue(graph.getRelations().stream().anyMatch(r ->
                 r.getMetadata().getType() == MetadataType.ARRAY
@@ -167,11 +163,11 @@ class JsonGraphConverterTest {
         assertTrue(graph.getRelations().stream().anyMatch(r ->
                 r.getMetadata().getType() == MetadataType.ARRAY_VALUE
                         && r.getMetadata().getPath().get(0) == 1
-                        && "plain".equals(r.getMetadata().getValue().asText())));
+                        && "plain".equals(r.getMetadata().getValue())));
         assertTrue(graph.getRelations().stream().anyMatch(r ->
                 r.getMetadata().getType() == MetadataType.ARRAY_VALUE
                         && r.getMetadata().getPath().get(0) == 2
-                        && r.getMetadata().getValue().asInt() == 42));
+                        && Integer.valueOf(42).equals(r.getMetadata().getValue())));
     }
 
     @Test
@@ -223,14 +219,11 @@ class JsonGraphConverterTest {
         UUID rootId = UUID.randomUUID();
         UUID childId = UUID.randomUUID();
 
-        ObjectNode childPayload = mapper.createObjectNode().put("city", "Bern");
-        ObjectNode rootPayload = mapper.createObjectNode();
-
         Graph graph = new Graph(
                 rootId,
                 Map.of(
-                        rootId, new Entity(rootId, "object", rootPayload),
-                        childId, new Entity(childId, "object", childPayload)),
+                        rootId, new Entity(rootId, "object", Map.of()),
+                        childId, new Entity(childId, "object", Map.of("city", "Bern"))),
                 List.of(
                         new Relation(rootId, childId, RelationMetadata.property("address", 0)),
                         new Relation(childId, null, RelationMetadata.field("city", 0))));
@@ -244,16 +237,11 @@ class JsonGraphConverterTest {
         UUID rootId = UUID.randomUUID();
         UUID itemId = UUID.randomUUID();
 
-        ObjectNode itemPayload = mapper.createObjectNode()
-                .put("name", "Book")
-                .put("price", 10);
-        ObjectNode rootPayload = mapper.createObjectNode();
-
         Graph graph = new Graph(
                 rootId,
                 Map.of(
-                        rootId, new Entity(rootId, "object", rootPayload),
-                        itemId, new Entity(itemId, "object", itemPayload)),
+                        rootId, new Entity(rootId, "object", Map.of()),
+                        itemId, new Entity(itemId, "object", Map.of("name", "Book", "price", 10))),
                 List.of(
                         new Relation(rootId, itemId, RelationMetadata.array("items", 0, List.of(0))),
                         new Relation(itemId, null, RelationMetadata.field("name", 0)),
@@ -289,7 +277,7 @@ class JsonGraphConverterTest {
         JsonNode original = parse(SAMPLE_JSON);
         JsonNode restored = converter.assemble(converter.split(original));
 
-        assertFalse(containsNestedStructure(restored) && restored.toString().contains("$node"));
+        assertFalse(restored.toString().contains("$node"));
         assertEquals(original, restored);
     }
 
@@ -297,11 +285,10 @@ class JsonGraphConverterTest {
     void assemble_throwsOnMissingEntity() {
         UUID rootId = UUID.randomUUID();
         UUID missingId = UUID.randomUUID();
-        ObjectNode rootPayload = mapper.createObjectNode();
 
         Graph graph = new Graph(
                 rootId,
-                Map.of(rootId, new Entity(rootId, "object", rootPayload)),
+                Map.of(rootId, new Entity(rootId, "object", Map.of())),
                 List.of(new Relation(rootId, missingId, RelationMetadata.property("child", 0))));
 
         assertThrows(IllegalArgumentException.class, () -> converter.assemble(graph));
@@ -319,6 +306,20 @@ class JsonGraphConverterTest {
     }
 
     @Test
+    void graph_jsonSerializesPayloadAndValueAsPlainJson() throws Exception {
+        Graph graph = converter.split(parse("""
+                {"number":"123","items":["plain",42]}
+                """));
+
+        String json = mapper.writeValueAsString(graph);
+
+        assertFalse(json.contains("\"nodeType\""), () -> json);
+        assertFalse(json.contains("\"containerNode\""), () -> json);
+        assertTrue(json.contains("\"number\":\"123\""), () -> json);
+        assertTrue(json.contains("\"plain\""), () -> json);
+    }
+
+    @Test
     void relationMetadata_jsonRoundTrip() throws Exception {
         RelationMetadata metadata = mapper.readValue(
                 "{\"kind\":\"arrayValue\",\"key\":\"items\",\"order\":2,\"path\":[1],\"value\":\"plain\"}",
@@ -328,7 +329,7 @@ class JsonGraphConverterTest {
         assertEquals("items", metadata.getKey());
         assertEquals(2, metadata.getOrder());
         assertEquals(List.of(1), metadata.getPath());
-        assertEquals("plain", metadata.getValue().asText());
+        assertEquals("plain", metadata.getValue());
     }
 
     // --- round-trip integration ---

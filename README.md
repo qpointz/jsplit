@@ -54,7 +54,7 @@ Graph
 Entity
 ├── id: UUID
 ├── type: String                    // always "object"
-└── payload: ObjectNode             // scalars + primitive-only arrays only
+└── payload: Map<String, Object>    // scalars + primitive-only arrays
 
 Relation
 ├── parentId: UUID
@@ -66,12 +66,14 @@ RelationMetadata
 ├── key: String
 ├── order: int
 ├── path: List<Integer>    // ARRAY, ARRAY_VALUE
-└── value: JsonNode        // ARRAY_VALUE only
+└── value: Object          // ARRAY_VALUE only (String, Number, Boolean, List, …)
 ```
 
-`MetadataType`: `FIELD`, `PROPERTY`, `ARRAY`, `ARRAY_VALUE` (JSON: `field`, `property`, `array`, `arrayValue`).
+`MetadataType`: `FIELD`, `PROPERTY`, `ARRAY`, `ARRAY_VALUE`.
 
-`Graph`, `Entity`, `Relation`, and `RelationMetadata` are Lombok `@Data` classes with Jackson-compatible constructors for JSON serialization.
+`Graph`, `Entity`, `Relation`, and `RelationMetadata` are Lombok `@Data` classes. Payload and value use plain Java types so REST APIs serialize them as normal JSON without custom Jackson handling.
+
+Use {@link Entity#payloadAsObjectNode()} and {@link RelationMetadata#valueAsJsonNode()} when tree access is needed. {@link JsonTrees} converts between maps/objects and Jackson nodes inside the converter.
 
 ## Entity payload rules
 
@@ -136,6 +138,7 @@ jsplit/
 ├── src/main/java/Entity.java
 ├── src/main/java/Relation.java
 ├── src/main/java/RelationMetadata.java
+├── src/main/java/JsonTrees.java
 ├── src/main/java/MetadataType.java
 ├── src/test/java/JsonGraphConverterTest.java
 ├── build.gradle.kts

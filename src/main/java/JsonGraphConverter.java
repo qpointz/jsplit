@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -16,8 +17,8 @@ import java.util.UUID;
  * Converts hierarchical JSON documents into a flat graph of entities linked by
  * relations, and reassembles them back into structurally identical JSON.
  *
- * <p>Entity payloads hold only scalar fields and primitive-only arrays. All nested
- * object structure is encoded in typed {@link RelationMetadata} on each {@link Relation}.
+ * <p>Entity payloads are {@link Map Maps} of plain Java values for clean REST serialization.
+ * Jackson tree types are used only inside the converter pipeline.
  *
  * <p>The converter exposes two operations:
  * <ul>
@@ -63,7 +64,7 @@ public class JsonGraphConverter {
 
     private UUID processObject(ObjectNode source, Map<UUID, Entity> entities, List<Relation> relations) {
         UUID id = UUID.randomUUID();
-        ObjectNode payload = JsonNodeFactory.instance.objectNode();
+        Map<String, Object> payload = new LinkedHashMap<>();
 
         int order = 0;
         Iterator<Map.Entry<String, JsonNode>> fields = source.fields();
@@ -77,13 +78,13 @@ public class JsonGraphConverter {
                 relations.add(new Relation(id, childId, RelationMetadata.property(key, order)));
             } else if (value.isArray()) {
                 if (isPrimitiveOnlyArray((ArrayNode) value)) {
-                    payload.set(key, value.deepCopy());
+                    payload.put(key, JsonTrees.objectFromJsonNode(value.deepCopy()));
                     relations.add(new Relation(id, null, RelationMetadata.field(key, order)));
                 } else {
                     processArray(id, key, (ArrayNode) value, order, List.of(), entities, relations);
                 }
             } else {
-                payload.set(key, value.deepCopy());
+                payload.put(key, JsonTrees.objectFromJsonNode(value.deepCopy()));
                 relations.add(new Relation(id, null, RelationMetadata.field(key, order)));
             }
             order++;
@@ -144,7 +145,7 @@ public class JsonGraphConverter {
                     .orElse(null);
             if (fieldRelation != null) {
                 String key = fieldRelation.getMetadata().getKey();
-                result.set(key, entity.getPayload().get(key).deepCopy());
+                result.set(key, JsonTrees.jsonNodeFromObject(entity.getPayload().get(key)));
                 continue;
             }
 
@@ -221,7 +222,7 @@ public class JsonGraphConverter {
                 } else if (leaf.getMetadata().getType() == MetadataType.ARRAY) {
                     array.add(rebuild(leaf.getChildId(), graph));
                 } else if (leaf.getMetadata().getType() == MetadataType.ARRAY_VALUE) {
-                    array.add(leaf.getMetadata().getValue().deepCopy());
+                    array.add(JsonTrees.jsonNodeFromObject(leaf.getMetadata().getValue()));
                 }
             }
         }

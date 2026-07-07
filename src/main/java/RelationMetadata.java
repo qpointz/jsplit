@@ -17,6 +17,9 @@ import java.util.List;
  *   <li>{@link MetadataType#ARRAY} — {@code key}, {@code order}, {@code path}</li>
  *   <li>{@link MetadataType#ARRAY_VALUE} — {@code key}, {@code order}, {@code path}, {@code value}</li>
  * </ul>
+ *
+ * <p>{@link #value} holds a plain JSON value ({@link String}, {@link Number}, {@link Boolean}, etc.).
+ * Use {@link #valueAsJsonNode()} when Jackson tree access is needed.
  */
 @Data
 @NoArgsConstructor
@@ -29,7 +32,7 @@ public class RelationMetadata {
     private String key;
     private int order;
     private List<Integer> path;
-    private JsonNode value;
+    private Object value;
 
     public static RelationMetadata field(String key, int order) {
         return new RelationMetadata(MetadataType.FIELD, key, order, null, null);
@@ -44,6 +47,14 @@ public class RelationMetadata {
     }
 
     public static RelationMetadata arrayValue(String key, int order, List<Integer> path, JsonNode value) {
+        return new RelationMetadata(MetadataType.ARRAY_VALUE, key, order, path, JsonTrees.objectFromJsonNode(value));
+    }
+
+    public static RelationMetadata arrayValue(String key, int order, List<Integer> path, Object value) {
         return new RelationMetadata(MetadataType.ARRAY_VALUE, key, order, path, value);
+    }
+
+    public JsonNode valueAsJsonNode() {
+        return JsonTrees.jsonNodeFromObject(value);
     }
 }
