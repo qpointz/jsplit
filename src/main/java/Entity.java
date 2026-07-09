@@ -9,9 +9,9 @@ import java.util.UUID;
 /**
  * A single node in the graph, corresponding to one JSON object from the original document.
  *
- * <p>The payload holds scalar fields and primitive-only arrays as plain Java values
- * ({@link Map}, {@link String}, {@link Number}, {@link Boolean}, lists, etc.).
- * Use {@link #payloadAsObjectNode()} when Jackson tree access is needed.
+ * <p>The payload holds scalar fields, primitive-only arrays, and optionally nested sub-objects
+ * when smart split keeps part of the hierarchy inline. Use {@link #payloadAsObjectNode()} when
+ * Jackson tree access is needed.
  */
 @Data
 @NoArgsConstructor

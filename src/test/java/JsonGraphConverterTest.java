@@ -10,6 +10,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -363,6 +365,326 @@ class JsonGraphConverterTest {
                   ]
                 }
                 """));
+    }
+
+    // --- SplitPath / SplitConfig ---
+
+    @Test
+    void splitPath_parse_propertyAndArrayWildcard() {
+        SplitPath rule = SplitPath.parse("a.b.c[]");
+        assertEquals("a.b.c[]", rule.toString());
+        SplitPath actual = SplitPath.parse("a.b").append("c").appendArrayIndex(0);
+        assertTrue(rule.matches(actual));
+        assertTrue(SplitPath.parse("a.b.c[].d").matches(actual.append("d")));
+    }
+
+    @Test
+    void splitPath_rejectsSubtreeSuffix() {
+        assertThrows(IllegalArgumentException.class, () -> SplitPath.parse("a.c.*"));
+    }
+
+    @Test
+    void splitConfig_fromYaml_keepAndSemanticRules() {
+        SplitConfig config = SplitConfig.fromYaml("""
+                keep:
+                  level:
+                    - a.b
+                    - customer.address
+                  subtree:
+                    - a.c
+                relations:
+                  - verb: owned-by
+                    path: a.b.c[]
+                  - verb: depends-on
+                    path: customer.address
+                    properties:
+                      system: crm
+                """);
+
+        assertTrue(config.shouldKeepSubobject(SplitPath.parse("a.b")));
+        assertTrue(config.shouldKeepSubobject(SplitPath.parse("customer.address")));
+        assertTrue(config.shouldKeepSubtree(SplitPath.parse("a.c")));
+        assertTrue(config.semanticAt(SplitPath.parse("a.b.c[]")).map(SemanticRule::getVerb).orElse("").equals("owned-by"));
+        assertEquals("crm", config.semanticAt(SplitPath.parse("customer.address"))
+                .map(SemanticRule::getProperties)
+                .map(p -> p.get("system"))
+                .orElse(null));
+    }
+
+    @Test
+    void splitConfig_fromYaml_multiplePathsPerRule() {
+        SplitConfig config = SplitConfig.fromYaml("""
+                relations:
+                  - verb: owned-by
+                    paths:
+                      - a.b.c[]
+                      - items[]
+                """);
+
+        assertEquals("owned-by", config.semanticAt(SplitPath.parse("a.b.c[]")).orElseThrow().getVerb());
+        assertEquals("owned-by", config.semanticAt(SplitPath.parse("items").appendArrayIndex(0)).orElseThrow().getVerb());
+    }
+
+    @Test
+    void splitConfig_fromYaml_rejectsInvalidYaml() {
+        assertThrows(IllegalArgumentException.class, () -> SplitConfig.fromYaml("keep: [unclosed"));
+    }
+
+    // --- smart split ---
+
+    @Test
+    void split_smartSplit_keepsSubobject() throws Exception {
+        String json = """
+                {
+                  "a": {
+                    "b": {
+                      "x": 1,
+                      "c": [{ "d": "value" }]
+                    }
+                  }
+                }
+                """;
+        SplitConfig config = SplitConfig.builder().keepSubobject("a", "b").build();
+        Graph graph = converter.split(parse(json), config);
+
+        assertEquals(3, graph.getEntities().size());
+        UUID aEntity = findChildId(graph, graph.getRootId(), MetadataType.PROPERTY, "a");
+        Entity entityA = graph.getEntities().get(aEntity);
+        assertTrue(entityA.getPayload().get("b") instanceof Map<?, ?>);
+        assertFalse(((Map<?, ?>) entityA.getPayload().get("b")).containsKey("c"));
+
+        Relation arrayRelation = graph.getRelations().stream()
+                .filter(r -> r.getParentId().equals(aEntity))
+                .filter(r -> r.getMetadata().getType() == MetadataType.ARRAY)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(List.of("b"), arrayRelation.getMetadata().getScope());
+    }
+
+    @Test
+    void split_smartSplit_roundTrip() throws Exception {
+        JsonNode original = parse("""
+                {
+                  "a": {
+                    "b": {
+                      "x": 1,
+                      "c": [{ "d": "value" }, { "d": "other" }]
+                    }
+                  }
+                }
+                """);
+        SplitConfig config = SplitConfig.fromYaml("""
+                keep:
+                  level:
+                    - a.b
+                relations:
+                  - verb: owned-by
+                    path: a.b.c[]
+                  - verb: depends-on
+                    path: a.b.c[].d
+                    properties:
+                      required: true
+                """);
+        Graph graph = converter.split(original, config);
+        assertEquals(original, converter.assemble(graph));
+    }
+
+    @Test
+    void split_smartSplit_defaultUnchanged() throws Exception {
+        Graph defaultGraph = converter.split(parse(SAMPLE_JSON));
+        Graph emptyConfigGraph = converter.split(parse(SAMPLE_JSON), SplitConfig.empty());
+
+        assertEquals(defaultGraph.getEntities().size(), emptyConfigGraph.getEntities().size());
+        assertEquals(defaultGraph.getRelations().size(), emptyConfigGraph.getRelations().size());
+    }
+
+    @Test
+    void split_smartSplit_customerAddress() throws Exception {
+        SplitConfig config = SplitConfig.builder().keepSubobject("customer", "address").build();
+        Graph graph = converter.split(parse(SAMPLE_JSON), config);
+
+        UUID customerId = findChildId(graph, graph.getRootId(), MetadataType.PROPERTY, "customer");
+        assertTrue(graph.getEntities().get(customerId).getPayload().get("address") instanceof Map<?, ?>);
+        assertEquals(4, graph.getEntities().size());
+    }
+
+    @Test
+    void split_smartSplit_keepsSubtree() throws Exception {
+        String json = """
+                {
+                  "a": {
+                    "b": 1,
+                    "c": {
+                      "d": { "e": 2 },
+                      "f": [{ "g": 3 }]
+                    }
+                  }
+                }
+                """;
+        SplitConfig config = SplitConfig.fromYaml("""
+                keep:
+                  subtree:
+                    - a.c
+                """);
+        Graph graph = converter.split(parse(json), config);
+
+        assertEquals(2, graph.getEntities().size());
+        UUID aEntity = findChildId(graph, graph.getRootId(), MetadataType.PROPERTY, "a");
+        Map<?, ?> payload = graph.getEntities().get(aEntity).getPayload();
+        assertTrue(payload.get("c") instanceof Map<?, ?>);
+        assertFalse(graph.getRelations().stream().anyMatch(r -> r.getMetadata().getType() == MetadataType.PROPERTY
+                && "d".equals(r.getMetadata().getKey())));
+        assertEquals(parse(json), converter.assemble(graph));
+    }
+
+    @Test
+    void split_keepLevel_vs_subtree() throws Exception {
+        String json = """
+                {
+                  "a": {
+                    "c": {
+                      "d": { "e": 2 }
+                    }
+                  }
+                }
+                """;
+        Graph levelGraph = converter.split(parse(json), SplitConfig.fromYaml("""
+                keep:
+                  level:
+                    - a.c
+                """));
+        Graph subtreeGraph = converter.split(parse(json), SplitConfig.fromYaml("""
+                keep:
+                  subtree:
+                    - a.c
+                """));
+
+        assertTrue(levelGraph.getEntities().size() > subtreeGraph.getEntities().size());
+        assertEquals(parse(json), converter.assemble(levelGraph));
+        assertEquals(parse(json), converter.assemble(subtreeGraph));
+    }
+
+    // --- relation semantics ---
+
+    @Test
+    void split_semantic_attribution() throws Exception {
+        JsonNode original = parse("""
+                {
+                  "a": {
+                    "b": {
+                      "c": [{ "d": "x" }]
+                    }
+                  }
+                }
+                """);
+        SplitConfig config = SplitConfig.fromYaml("""
+                keep:
+                  level:
+                    - a.b
+                relations:
+                  - verb: owned-by
+                    path: a.b.c[]
+                """);
+        Graph graph = converter.split(original, config);
+
+        Relation ownedBy = graph.getRelations().stream()
+                .filter(r -> r.getMetadata().getType() == MetadataType.ARRAY)
+                .filter(r -> "owned-by".equals(r.getVerb()))
+                .findFirst()
+                .orElseThrow();
+        assertNotNull(ownedBy.getChildId());
+        assertNull(ownedBy.getProperties());
+    }
+
+    @Test
+    void split_semantic_withProperties() throws Exception {
+        JsonNode original = parse("""
+                {"customer":{"address":{"city":"Bern"}}}
+                """);
+        SplitConfig config = SplitConfig.fromYaml("""
+                relations:
+                  - verb: depends-on
+                    path: customer.address
+                    properties:
+                      system: crm
+                """);
+        Graph graph = converter.split(original, config);
+
+        Relation relation = graph.getRelations().stream()
+                .filter(r -> r.getMetadata().getType() == MetadataType.PROPERTY)
+                .filter(r -> "address".equals(r.getMetadata().getKey()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("depends-on", relation.getVerb());
+        assertEquals("crm", relation.getProperties().get("system"));
+    }
+
+    @Test
+    void split_semantic_defaultEmpty() throws Exception {
+        Graph graph = converter.split(parse(SAMPLE_JSON));
+        for (Relation relation : graph.getRelations()) {
+            assertNull(relation.getVerb());
+            assertNull(relation.getProperties());
+        }
+    }
+
+    @Test
+    void relation_jsonOmitsSemantics() throws Exception {
+        Graph graph = converter.split(parse("""
+                {"a":{"b":{"c":[{"d":1}]}}}
+                """), SplitConfig.fromYaml("""
+                keep:
+                  level:
+                    - a.b
+                relations:
+                  - verb: owned-by
+                    path: a.b.c[]
+                """));
+
+        String json = mapper.writeValueAsString(graph);
+        assertTrue(json.contains("\"owned-by\""));
+        assertFalse(json.contains("\"properties\":{}"));
+    }
+
+    @Test
+    void assemble_ignoresSemantics() throws Exception {
+        JsonNode original = parse("""
+                {"a":{"b":{"c":[{"d":"x"}]}}}
+                """);
+        SplitConfig config = SplitConfig.fromYaml("""
+                keep:
+                  level:
+                    - a.b
+                relations:
+                  - verb: owned-by
+                    path: a.b.c[]
+                  - verb: depends-on
+                    path: a.b.c[].d
+                    properties:
+                      required: true
+                """);
+        Graph graph = converter.split(original, config);
+        assertEquals(original, converter.assemble(graph));
+    }
+
+    @Test
+    void assemble_scopedRelations() throws Exception {
+        UUID rootId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+
+        Graph graph = new Graph(
+                rootId,
+                Map.of(
+                        rootId, new Entity(rootId, "object", Map.of("b", Map.of("x", 1))),
+                        childId, new Entity(childId, "object", Map.of("d", "value"))),
+                List.of(
+                        new Relation(rootId, null, RelationMetadata.field("b", 0)),
+                        new Relation(rootId, childId, RelationMetadata.array("c", 1, List.of(0), List.of("b"))),
+                        new Relation(childId, null, RelationMetadata.field("d", 0))));
+
+        JsonNode result = converter.assemble(graph);
+        assertEquals("value", result.get("b").get("c").get(0).get("d").asText());
+        assertEquals(1, result.get("b").get("x").asInt());
     }
 
     private static UUID findChildId(Graph graph, UUID parentId, MetadataType type, String key) {

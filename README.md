@@ -9,7 +9,7 @@ Structure is encoded in **entities** (scalar data) and **relations** (placement 
 - Java 21
 - [Jackson Databind](https://github.com/FasterXML/jackson-databind) (only runtime dependency)
 - [Lombok](https://projectlombok.org/) (compile-time only, for model boilerplate)
-- No Spring, no persistence layer
+- [Jackson YAML](https://github.com/FasterXML/jackson-dataformats-text) (split configuration only)
 
 ## Build and run
 
@@ -28,13 +28,13 @@ $env:JAVA_HOME = "C:\Program Files\Zulu\zulu-21"
 
 ## API
 
-The converter exposes exactly two public methods:
-
 ```java
 JsonGraphConverter converter = new JsonGraphConverter();
 
-Graph graph = converter.split(originalJson);   // JSON → graph
-ObjectNode restored = converter.assemble(graph); // graph → JSON
+Graph graph = converter.split(originalJson);              // default: split every object
+Graph graph = converter.split(originalJson, splitConfig); // smart split + semantics
+
+ObjectNode restored = converter.assemble(graph);          // graph → JSON
 ```
 
 The invariant:
@@ -42,6 +42,8 @@ The invariant:
 ```java
 assert original.equals(converter.assemble(converter.split(original)));
 ```
+
+Smart-split config affects **split only**; assemble ignores `verb` / `properties` on relations.
 
 ## Graph model
 
@@ -59,13 +61,16 @@ Entity
 Relation
 ├── parentId: UUID
 ├── childId: UUID | null
-└── metadata: RelationMetadata
+├── metadata: RelationMetadata
+├── verb: String | null              // optional semantic type (e.g. owned-by)
+└── properties: Map<String, Object> | null  // optional semantic attributes
 
 RelationMetadata
 ├── type: MetadataType     // serialized as JSON "kind"
 ├── key: String
 ├── order: int
 ├── path: List<Integer>    // ARRAY, ARRAY_VALUE
+├── scope: List<String>    // nested path inside inlined sub-object (smart split)
 └── value: Object          // ARRAY_VALUE only (String, Number, Boolean, List, …)
 ```
 
@@ -77,14 +82,11 @@ Use {@link Entity#payloadAsObjectNode()} and {@link RelationMetadata#valueAsJson
 
 ## Entity payload rules
 
-An entity `payload` contains **only**:
+**Default split:** an entity `payload` contains only scalars and primitive-only arrays. Nested objects and object arrays are removed from the payload; placement is recorded in relations.
 
-- scalar properties (string, number, boolean, null)
-- arrays whose elements are **all primitives** (e.g. `"tags": ["a","b","c"]`)
+**Smart split:** payloads may also contain nested `Map` sub-objects when configured to keep part of the hierarchy inline.
 
-Nested objects and arrays containing objects are **removed** from the payload. Their placement is recorded in relations.
-
-### Example root payload after split
+### Example root payload after default split
 
 ```json
 {
@@ -105,6 +107,40 @@ Nested objects and arrays containing objects are **removed** from the payload. T
 | `ARRAY_VALUE` | `arrayValue` | `key`, `order`, `path`, `value` |
 
 Unused properties are omitted from JSON (`null`).
+
+## Smart split
+
+Inject a {@link SplitConfig} to control which objects stay inline and to annotate relations.
+
+### YAML configuration
+
+```yaml
+keep:
+  level:        # inline object at path; children may still split
+    - a.b
+    - customer.address
+  subtree:      # inline path and all descendants
+    - a.c
+
+relations:
+  - verb: owned-by
+    path: a.b.c[]
+  - verb: depends-on
+    path: customer.address
+    properties:
+      system: crm
+```
+
+Load in Java:
+
+```java
+SplitConfig config = SplitConfig.fromYaml(yaml);
+Graph graph = converter.split(original, config);
+```
+
+Read as: **(a.b) —owned-by→ (c) —depends-on→ (d)** — `b` stays embedded in the `a` entity; `c` and `d` are separate entities linked by annotated relations.
+
+Programmatic builder: {@link SplitConfig#builder()} with `keepSubobject`, `keepSubtree`, and `semantic`.
 
 ## Split algorithm
 
@@ -134,6 +170,10 @@ Property order and array order from the original document are preserved.
 ```
 jsplit/
 ├── src/main/java/JsonGraphConverter.java
+├── src/main/java/SplitConfig.java
+├── src/main/java/SplitPath.java
+├── src/main/java/SemanticRule.java
+├── src/main/java/SplitConfigYaml.java
 ├── src/main/java/Graph.java
 ├── src/main/java/Entity.java
 ├── src/main/java/Relation.java
@@ -151,6 +191,7 @@ Production code is split across the converter and Lombok-annotated model classes
 
 `JsonGraphConverterTest` covers:
 
-- **split()** — flat payloads, relation metadata, input immutability, no nested objects in payloads
-- **assemble()** — reconstruction from split graphs and hand-built graphs, order preservation, missing-entity errors
-- **round-trip** — nested arrays, mixed primitive/object arrays, full sample document
+- **split()** — flat payloads, relation metadata, input immutability, smart split, semantics
+- **assemble()** — reconstruction from split graphs and hand-built graphs, scoped relations, order preservation
+- **SplitConfig / SplitPath** — YAML loading, level vs subtree keep, semantic attribution
+- **round-trip** — nested arrays, mixed primitive/object arrays, smart-split documents

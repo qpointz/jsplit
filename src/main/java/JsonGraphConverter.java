@@ -20,11 +20,8 @@ import java.util.UUID;
  * <p>Entity payloads are {@link Map Maps} of plain Java values for clean REST serialization.
  * Jackson tree types are used only inside the converter pipeline.
  *
- * <p>The converter exposes two operations:
- * <ul>
- *   <li>{@link #split(JsonNode)} — decompose a nested JSON tree into a {@link Graph}</li>
- *   <li>{@link #assemble(Graph)} — rebuild the original JSON from a graph</li>
- * </ul>
+ * <p>The converter exposes split and assemble operations. Use {@link SplitConfig} to control
+ * which object hierarchies stay inline and to annotate relations with semantic verbs.
  *
  * <p>Round-trip equality is guaranteed when the root is a JSON object:
  * <pre>{@code original.equals(converter.assemble(converter.split(original)))}</pre>
@@ -34,64 +31,114 @@ import java.util.UUID;
 public class JsonGraphConverter {
 
     /**
+     * Splits a hierarchical JSON document into a graph using default rules (every object becomes an entity).
+     */
+    public Graph split(JsonNode root) {
+        return split(root, SplitConfig.empty());
+    }
+
+    /**
      * Splits a hierarchical JSON document into a graph.
      *
      * @param root the JSON root; must be an {@link ObjectNode}
+     * @param config smart-split and semantic configuration
      * @return a graph whose {@link Graph#rootId} points to the root entity
      * @throws IllegalArgumentException if {@code root} is not a JSON object
      */
-    public Graph split(JsonNode root) {
+    public Graph split(JsonNode root, SplitConfig config) {
         if (!root.isObject()) {
             throw new IllegalArgumentException("Root must be a JSON object");
         }
 
         Map<UUID, Entity> entities = new HashMap<>();
         List<Relation> relations = new ArrayList<>();
-        UUID rootId = processObject((ObjectNode) root, entities, relations);
+        UUID rootId = processObject((ObjectNode) root, SplitPath.root(), entities, relations, config);
         return new Graph(rootId, entities, relations);
     }
 
     /**
      * Reassembles a JSON document from a graph produced by {@link #split(JsonNode)}.
-     *
-     * @param graph a graph previously produced by {@link #split(JsonNode)}
-     * @return the reconstructed JSON root object
-     * @throws IllegalArgumentException if a relation references a missing entity
      */
     public ObjectNode assemble(Graph graph) {
         return rebuild(graph.getRootId(), graph);
     }
 
-    private UUID processObject(ObjectNode source, Map<UUID, Entity> entities, List<Relation> relations) {
+    private UUID processObject(
+            ObjectNode source,
+            SplitPath path,
+            Map<UUID, Entity> entities,
+            List<Relation> relations,
+            SplitConfig config) {
         UUID id = UUID.randomUUID();
         Map<String, Object> payload = new LinkedHashMap<>();
+        processFields(source, payload, id, path, List.of(), entities, relations, config);
+        entities.put(id, new Entity(id, "object", payload));
+        return id;
+    }
 
+    private Map<String, Object> processInlinedObject(
+            ObjectNode source,
+            SplitPath path,
+            UUID ownerId,
+            List<String> scope,
+            Map<UUID, Entity> entities,
+            List<Relation> relations,
+            SplitConfig config) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        processFields(source, payload, ownerId, path, scope, entities, relations, config);
+        return payload;
+    }
+
+    private void processFields(
+            ObjectNode source,
+            Map<String, Object> payload,
+            UUID ownerId,
+            SplitPath path,
+            List<String> scope,
+            Map<UUID, Entity> entities,
+            List<Relation> relations,
+            SplitConfig config) {
         int order = 0;
         Iterator<Map.Entry<String, JsonNode>> fields = source.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> field = fields.next();
             String key = field.getKey();
             JsonNode value = field.getValue();
+            SplitPath childPath = path.append(key);
 
             if (value.isObject()) {
-                UUID childId = processObject((ObjectNode) value, entities, relations);
-                relations.add(new Relation(id, childId, RelationMetadata.property(key, order)));
+                if (config.shouldKeepSubtree(childPath)) {
+                    payload.put(key, JsonTrees.mapFromObjectNode((ObjectNode) value));
+                    relations.add(new Relation(ownerId, null, RelationMetadata.field(key, order, scopeOrNull(scope))));
+                } else if (config.shouldKeepSubobject(childPath)) {
+                    Map<String, Object> nested = processInlinedObject(
+                            (ObjectNode) value, childPath, ownerId, appendScope(scope, key), entities, relations, config);
+                    payload.put(key, nested);
+                    relations.add(new Relation(ownerId, null, RelationMetadata.field(key, order, scopeOrNull(scope))));
+                } else {
+                    UUID childId = processObject((ObjectNode) value, childPath, entities, relations, config);
+                    relations.add(applySemantics(
+                            childPath,
+                            new Relation(ownerId, childId, RelationMetadata.property(key, order, scopeOrNull(scope))),
+                            config));
+                }
             } else if (value.isArray()) {
                 if (isPrimitiveOnlyArray((ArrayNode) value)) {
                     payload.put(key, JsonTrees.objectFromJsonNode(value.deepCopy()));
-                    relations.add(new Relation(id, null, RelationMetadata.field(key, order)));
+                    if (scope.isEmpty()) {
+                        relations.add(new Relation(ownerId, null, RelationMetadata.field(key, order, null)));
+                    }
                 } else {
-                    processArray(id, key, (ArrayNode) value, order, List.of(), entities, relations);
+                    processArray(ownerId, key, (ArrayNode) value, order, List.of(), childPath, scope, entities, relations, config);
                 }
             } else {
                 payload.put(key, JsonTrees.objectFromJsonNode(value.deepCopy()));
-                relations.add(new Relation(id, null, RelationMetadata.field(key, order)));
+                if (scope.isEmpty()) {
+                    relations.add(new Relation(ownerId, null, RelationMetadata.field(key, order, null)));
+                }
             }
             order++;
         }
-
-        entities.put(id, new Entity(id, "object", payload));
-        return id;
     }
 
     private void processArray(
@@ -100,21 +147,42 @@ public class JsonGraphConverter {
             ArrayNode array,
             int order,
             List<Integer> pathPrefix,
+            SplitPath jsonPath,
+            List<String> scope,
             Map<UUID, Entity> entities,
-            List<Relation> relations) {
+            List<Relation> relations,
+            SplitConfig config) {
         for (int i = 0; i < array.size(); i++) {
             JsonNode element = array.get(i);
             List<Integer> path = appendPath(pathPrefix, i);
+            SplitPath elementPath = jsonPath.appendArrayIndex(i);
 
             if (element.isObject()) {
-                UUID childId = processObject((ObjectNode) element, entities, relations);
-                relations.add(new Relation(parentId, childId, RelationMetadata.array(key, order, path)));
+                UUID childId = processObject((ObjectNode) element, elementPath, entities, relations, config);
+                relations.add(applySemantics(
+                        jsonPath.appendArrayWildcard(),
+                        new Relation(parentId, childId, RelationMetadata.array(key, order, path, scopeOrNull(scope))),
+                        config));
             } else if (element.isArray()) {
-                processArray(parentId, key, (ArrayNode) element, order, path, entities, relations);
+                processArray(parentId, key, (ArrayNode) element, order, path, elementPath, scope, entities, relations, config);
             } else {
-                relations.add(new Relation(parentId, null, RelationMetadata.arrayValue(key, order, path, element.deepCopy())));
+                relations.add(new Relation(
+                        parentId,
+                        null,
+                        RelationMetadata.arrayValue(
+                                key, order, path, JsonTrees.objectFromJsonNode(element.deepCopy()), scopeOrNull(scope))));
             }
         }
+    }
+
+    private static Relation applySemantics(SplitPath path, Relation relation, SplitConfig config) {
+        config.semanticAt(path).ifPresent(rule -> {
+            relation.setVerb(rule.getVerb());
+            if (rule.getProperties() != null) {
+                relation.setProperties(new LinkedHashMap<>(rule.getProperties()));
+            }
+        });
+        return relation;
     }
 
     private ObjectNode rebuild(UUID entityId, Graph graph) {
@@ -127,7 +195,21 @@ public class JsonGraphConverter {
                 .filter(r -> r.getParentId().equals(entityId))
                 .toList();
 
-        int maxOrder = childRelations.stream()
+        ObjectNode result = rebuildAtScope(entity, childRelations, List.of(), graph);
+        applyScopedRelations(result, entity, childRelations, graph);
+        return result;
+    }
+
+    private ObjectNode rebuildAtScope(
+            Entity entity,
+            List<Relation> relations,
+            List<String> scope,
+            Graph graph) {
+        List<Relation> scopedRelations = relations.stream()
+                .filter(r -> scopeEquals(r.getMetadata().getScope(), scope))
+                .toList();
+
+        int maxOrder = scopedRelations.stream()
                 .mapToInt(r -> r.getMetadata().getOrder())
                 .max()
                 .orElse(-1);
@@ -138,7 +220,7 @@ public class JsonGraphConverter {
         for (int o = 0; o <= maxOrder; o++) {
             final int fieldOrder = o;
 
-            Relation fieldRelation = childRelations.stream()
+            Relation fieldRelation = scopedRelations.stream()
                     .filter(r -> r.getMetadata().getType() == MetadataType.FIELD
                             && r.getMetadata().getOrder() == fieldOrder)
                     .findFirst()
@@ -149,7 +231,7 @@ public class JsonGraphConverter {
                 continue;
             }
 
-            Relation propertyRelation = childRelations.stream()
+            Relation propertyRelation = scopedRelations.stream()
                     .filter(r -> r.getMetadata().getType() == MetadataType.PROPERTY
                             && r.getMetadata().getOrder() == fieldOrder)
                     .findFirst()
@@ -160,18 +242,52 @@ public class JsonGraphConverter {
                 continue;
             }
 
-            String arrayKey = childRelations.stream()
+            String arrayKey = scopedRelations.stream()
                     .filter(r -> isArrayPlacement(r.getMetadata()) && r.getMetadata().getOrder() == fieldOrder)
                     .map(r -> r.getMetadata().getKey())
                     .findFirst()
                     .orElse(null);
             if (arrayKey != null && !placedArrayKeys.containsValue(arrayKey)) {
                 placedArrayKeys.put(fieldOrder, arrayKey);
-                result.set(arrayKey, buildArray(arrayKey, childRelations, graph));
+                result.set(arrayKey, buildArray(arrayKey, scopedRelations, graph));
             }
         }
 
         return result;
+    }
+
+    private void applyScopedRelations(
+            ObjectNode result,
+            Entity entity,
+            List<Relation> relations,
+            Graph graph) {
+        Map<List<String>, List<Relation>> grouped = new LinkedHashMap<>();
+        for (Relation relation : relations) {
+            List<String> scope = relation.getMetadata().getScope();
+            if (scope == null || scope.isEmpty()) {
+                continue;
+            }
+            grouped.computeIfAbsent(scope, ignored -> new ArrayList<>()).add(relation);
+        }
+
+        for (Map.Entry<List<String>, List<Relation>> entry : grouped.entrySet()) {
+            ObjectNode target = navigateToScope(result, entity, entry.getKey());
+            ObjectNode nested = rebuildAtScope(entity, entry.getValue(), entry.getKey(), graph);
+            nested.fields().forEachRemaining(field -> target.set(field.getKey(), field.getValue()));
+        }
+    }
+
+    private static ObjectNode navigateToScope(ObjectNode result, Entity entity, List<String> scope) {
+        ObjectNode current = result;
+        for (String key : scope) {
+            JsonNode existing = current.get(key);
+            if (existing == null || !existing.isObject()) {
+                Object value = entity.getPayload().get(key);
+                current.set(key, value != null ? JsonTrees.jsonNodeFromObject(value) : JsonNodeFactory.instance.objectNode());
+            }
+            current = (ObjectNode) current.get(key);
+        }
+        return current;
     }
 
     private ArrayNode buildArray(String key, List<Relation> relations, Graph graph) {
@@ -264,6 +380,23 @@ public class JsonGraphConverter {
             }
         }
         return true;
+    }
+
+    private static List<String> appendScope(List<String> scope, String key) {
+        List<String> next = new ArrayList<>(scope);
+        next.add(key);
+        return next;
+    }
+
+    private static List<String> scopeOrNull(List<String> scope) {
+        return scope == null || scope.isEmpty() ? null : List.copyOf(scope);
+    }
+
+    private static boolean scopeEquals(List<String> actual, List<String> expected) {
+        if (actual == null || actual.isEmpty()) {
+            return expected.isEmpty();
+        }
+        return actual.equals(expected);
     }
 
     /**

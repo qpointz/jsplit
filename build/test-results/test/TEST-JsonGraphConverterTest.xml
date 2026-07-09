@@ -1,29 +1,46 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="JsonGraphConverterTest" tests="23" skipped="0" failures="0" errors="0" timestamp="2026-07-07T06:14:10.498Z" hostname="DESKTOP-QTGTBJ9" time="0.4">
+<testsuite name="JsonGraphConverterTest" tests="40" skipped="0" failures="0" errors="0" timestamp="2026-07-07T11:54:15.479Z" hostname="DESKTOP-QTGTBJ9" time="0.506">
   <properties/>
-  <testcase name="roundTrip_mixedArray()" classname="JsonGraphConverterTest" time="0.233"/>
-  <testcase name="graph_jsonSerializesPayloadAndValueAsPlainJson()" classname="JsonGraphConverterTest" time="0.054"/>
+  <testcase name="roundTrip_mixedArray()" classname="JsonGraphConverterTest" time="0.235"/>
+  <testcase name="relation_jsonOmitsSemantics()" classname="JsonGraphConverterTest" time="0.112"/>
+  <testcase name="graph_jsonSerializesPayloadAndValueAsPlainJson()" classname="JsonGraphConverterTest" time="0.008"/>
   <testcase name="roundTrip_nestedArrays()" classname="JsonGraphConverterTest" time="0.002"/>
-  <testcase name="split_emptyObject()" classname="JsonGraphConverterTest" time="0.0"/>
-  <testcase name="split_rejectsNonObjectRoot()" classname="JsonGraphConverterTest" time="0.003"/>
-  <testcase name="graph_jsonSerializable()" classname="JsonGraphConverterTest" time="0.036"/>
+  <testcase name="split_smartSplit_keepsSubobject()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="splitConfig_fromYaml_multiplePathsPerRule()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="split_emptyObject()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="split_rejectsNonObjectRoot()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_smartSplit_customerAddress()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="graph_jsonSerializable()" classname="JsonGraphConverterTest" time="0.023"/>
   <testcase name="split_payloadContainsNoNestedObjects()" classname="JsonGraphConverterTest" time="0.002"/>
-  <testcase name="split_arrayOfObjects_replacesOnlyObjects()" classname="JsonGraphConverterTest" time="0.002"/>
-  <testcase name="split_nestedObject_createsRelation()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="split_smartSplit_keepsSubtree()" classname="JsonGraphConverterTest" time="0.004"/>
+  <testcase name="split_arrayOfObjects_replacesOnlyObjects()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="split_semantic_defaultEmpty()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="split_nestedObject_createsRelation()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_semantic_attribution()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="splitConfig_fromYaml_rejectsInvalidYaml()" classname="JsonGraphConverterTest" time="0.004"/>
   <testcase name="roundTrip_sampleDocument()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_semantic_withProperties()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="split_smartSplit_defaultUnchanged()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="splitPath_rejectsSubtreeSuffix()" classname="JsonGraphConverterTest" time="0.002"/>
   <testcase name="assemble_nestedObjects()" classname="JsonGraphConverterTest" time="0.001"/>
   <testcase name="assemble_arrayOfObjects()" classname="JsonGraphConverterTest" time="0.001"/>
-  <testcase name="relationMetadata_jsonRoundTrip()" classname="JsonGraphConverterTest" time="0.003"/>
+  <testcase name="splitConfig_fromYaml_keepAndSemanticRules()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="relationMetadata_jsonRoundTrip()" classname="JsonGraphConverterTest" time="0.005"/>
+  <testcase name="splitPath_parse_propertyAndArrayWildcard()" classname="JsonGraphConverterTest" time="0.0"/>
   <testcase name="assemble_preservesArrayOrder()" classname="JsonGraphConverterTest" time="0.001"/>
-  <testcase name="assemble_noStructuralRefsInOutput()" classname="JsonGraphConverterTest" time="0.008"/>
+  <testcase name="assemble_noStructuralRefsInOutput()" classname="JsonGraphConverterTest" time="0.009"/>
+  <testcase name="split_smartSplit_roundTrip()" classname="JsonGraphConverterTest" time="0.004"/>
   <testcase name="split_setsRootId()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="assemble_scopedRelations()" classname="JsonGraphConverterTest" time="0.001"/>
   <testcase name="assemble_preservesPropertyOrder()" classname="JsonGraphConverterTest" time="0.001"/>
-  <testcase name="split_sampleDocument_flatPayload()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_sampleDocument_flatPayload()" classname="JsonGraphConverterTest" time="0.001"/>
   <testcase name="split_flatObject()" classname="JsonGraphConverterTest" time="0.001"/>
-  <testcase name="assemble_sampleDocument_fromSplitGraph()" classname="JsonGraphConverterTest" time="0.001"/>
+  <testcase name="assemble_ignoresSemantics()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="split_keepLevel_vs_subtree()" classname="JsonGraphConverterTest" time="0.004"/>
+  <testcase name="assemble_sampleDocument_fromSplitGraph()" classname="JsonGraphConverterTest" time="0.002"/>
   <testcase name="split_sampleDocument_entitiesAndRelations()" classname="JsonGraphConverterTest" time="0.002"/>
   <testcase name="split_doesNotMutateInput()" classname="JsonGraphConverterTest" time="0.001"/>
-  <testcase name="assemble_throwsOnMissingEntity()" classname="JsonGraphConverterTest" time="0.002"/>
+  <testcase name="assemble_throwsOnMissingEntity()" classname="JsonGraphConverterTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

@@ -18,6 +18,9 @@ import java.util.List;
  *   <li>{@link MetadataType#ARRAY_VALUE} — {@code key}, {@code order}, {@code path}, {@code value}</li>
  * </ul>
  *
+ * <p>{@code scope} holds a property path inside an inlined sub-object on the owning entity
+ * (e.g. {@code ["b"]} places the field under payload key {@code b}).
+ *
  * <p>{@link #value} holds a plain JSON value ({@link String}, {@link Number}, {@link Boolean}, etc.).
  * Use {@link #valueAsJsonNode()} when Jackson tree access is needed.
  */
@@ -32,26 +35,43 @@ public class RelationMetadata {
     private String key;
     private int order;
     private List<Integer> path;
+    private List<String> scope;
     private Object value;
 
     public static RelationMetadata field(String key, int order) {
-        return new RelationMetadata(MetadataType.FIELD, key, order, null, null);
+        return field(key, order, null);
+    }
+
+    public static RelationMetadata field(String key, int order, List<String> scope) {
+        return new RelationMetadata(MetadataType.FIELD, key, order, null, scope, null);
     }
 
     public static RelationMetadata property(String key, int order) {
-        return new RelationMetadata(MetadataType.PROPERTY, key, order, null, null);
+        return property(key, order, null);
+    }
+
+    public static RelationMetadata property(String key, int order, List<String> scope) {
+        return new RelationMetadata(MetadataType.PROPERTY, key, order, null, scope, null);
     }
 
     public static RelationMetadata array(String key, int order, List<Integer> path) {
-        return new RelationMetadata(MetadataType.ARRAY, key, order, path, null);
+        return array(key, order, path, null);
+    }
+
+    public static RelationMetadata array(String key, int order, List<Integer> path, List<String> scope) {
+        return new RelationMetadata(MetadataType.ARRAY, key, order, path, scope, null);
     }
 
     public static RelationMetadata arrayValue(String key, int order, List<Integer> path, JsonNode value) {
-        return new RelationMetadata(MetadataType.ARRAY_VALUE, key, order, path, JsonTrees.objectFromJsonNode(value));
+        return arrayValue(key, order, path, JsonTrees.objectFromJsonNode(value), null);
     }
 
     public static RelationMetadata arrayValue(String key, int order, List<Integer> path, Object value) {
-        return new RelationMetadata(MetadataType.ARRAY_VALUE, key, order, path, value);
+        return arrayValue(key, order, path, value, null);
+    }
+
+    public static RelationMetadata arrayValue(String key, int order, List<Integer> path, Object value, List<String> scope) {
+        return new RelationMetadata(MetadataType.ARRAY_VALUE, key, order, path, scope, value);
     }
 
     public JsonNode valueAsJsonNode() {
